@@ -1,0 +1,81 @@
+---
+# Instala o Docker e sobe o site em container num Amazon Linux 2023 limpo.
+# Idempotente: rodar de novo não muda nada se o servidor já está no estado desejado.
+- name: Configurar o servidor do site
+  hosts: site
+  become: true
+
+  tasks:
+    - name: Instalar o Docker
+      ansible.builtin.dnf:
+        name: docker
+        state: present
+
+    - name: Habilitar e iniciar o serviço do Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Liberar o Docker para o ec2-user (vale no próximo login)
+      ansible.builtin.user:
+        name: ec2-user
+        groups: docker
+        append: true
+
+    - name: Criar a pasta do site
+      ansible.builtin.file:
+        path: /opt/site
+        state: directory
+        mode: "0755"
+
+    - name: Copiar o index.html
+      ansible.builtin.copy:
+        src: site/index.html
+        dest: /opt/site/index.html
+        mode: "0644"
+      notify:
+        - Construir a imagem do site
+        - Recriar o container do site
+
+    - name: Copiar o Dockerfile
+      ansible.builtin.copy:
+        src: site/Dockerfile
+        dest: /opt/site/Dockerfile
+        mode: "0644"
+      notify:
+        - Construir a imagem do site
+        - Recriar o container do site
+
+    # Roda os handlers agora, para a imagem e o container existirem antes da checagem abaixo
+    - name: Aplicar as mudanças pendentes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ver se o container está rodando
+      ansible.builtin.command: docker inspect -f '{{ '{{' }}.State.Running{{ '}}' }}' site
+      register: site_estado
+      changed_when: false
+      failed_when: false
+
+    - name: Subir o container se ele não estiver rodando
+      ansible.builtin.shell: |
+        docker rm -f site
+        docker run -d --name site --restart unless-stopped -p 80:80 meu-site
+      when: site_estado.stdout != 'true'
+
+    - name: Conferir que o site responde
+      ansible.builtin.uri:
+        url: http://localhost/
+        return_content: true
+      register: resposta
+      failed_when: "'Ansible' not in resposta.content"
+      changed_when: false
+
+  handlers:
+    - name: Construir a imagem do site
+      ansible.builtin.command: docker build -t meu-site /opt/site
+
+    - name: Recriar o container do site
+      ansible.builtin.shell: |
+        docker rm -f site
+        docker run -d --name site --restart unless-stopped -p 80:80 meu-site

@@ -1,0 +1,6 @@
+inventory.ini
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/terraform.tfvars
+terraform/plan.tfplan
